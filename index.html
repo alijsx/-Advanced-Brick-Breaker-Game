@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio,line-clamp,container-queries"></script>
+  <title>Advanced Brick Breaker Game</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; display: flex; justify-content: center; align-items: center; flex-direction: column; height: 100vh; background: linear-gradient(45deg, #222, #555); color: white; font-family: Arial, sans-serif; }
+    #score, #level { font-size: 18px; color: #ffffff; margin-bottom: 10px; }
+    #gameCanvas { border-radius: 10px; box-shadow: 0 0 20px rgba(0, 0, 0, 0.5); background: #1a1a1a; }
+    #gameOver { display: none; text-align: center; color: #ffffff; font-size: 24px; }
+    #restart { margin-top: 10px; padding: 8px 15px; font-size: 16px; background: #ff6347; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+    #restart:hover { background: #ff4b2b; }
+    .controls { display: flex; justify-content: center; margin-top: 15px; gap: 20px; }
+    .control-button { padding: 15px; font-size: 20px; background: #0095dd; color: #fff; border: none; border-radius: 50%; cursor: pointer; width: 60px; height: 60px; text-align: center; }
+    .control-button:active { background: #007acc; }
+    .power-up-icon { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="score">Score: 0</div>
+  <div id="level">Level: 1</div>
+  <canvas id="gameCanvas" width="360" height="480"></canvas>
+  <div class="controls  flex md:hidden">
+    <button class="control-button" id="leftButton">⬅️</button>
+    <button class="control-button" id="rightButton">➡️</button>
+  </div>
+  <div id="gameOver">
+    <p>Game Over!</p>
+    <button id="restart">Restart</button>
+  </div>
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Game variables
+    let score = 0;
+    let level = 1;
+    let rows = 3;
+    let cols = 5;
+    let paddleWidth = 80;
+    const brickWidth = 50;
+    const brickHeight = 20;
+    const brickPadding = 10;
+    const brickOffsetTop = 30;
+    const brickOffsetLeft = 35;
+    const paddleHeight = 12;
+    let paddleX = (canvas.width - paddleWidth) / 2;
+    let rightPressed = false;
+    let leftPressed = false;
+    let ballRadius = 8;
+    let x = canvas.width / 2;
+    let y = canvas.height - 30;
+    let dx = 2;
+    let dy = -2;
+    let gameOver = false;
+    let bricks = [];
+    let stickers = [];  // Store active stickers
+    let shieldActive = false;  // Shield to prevent ball from going out
+    let doublePointsActive = false;  // Double points power-up active
+    let powerUpTimers = {};  // Track power-up durations
+
+    // Initialize bricks
+    function initBricks() {
+      bricks = [];
+      for (let c = 0; c < cols; c++) {
+        bricks[c] = [];
+        for (let r = 0; r < rows; r++) {
+          bricks[c][r] = { x: 0, y: 0, status: 1 };
+        }
+      }
+    }
+    initBricks();
+
+    // Event listeners for keyboard and touch controls
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Right" || e.key === "ArrowRight") rightPressed = true;
+      if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = true;
+    });
+
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "Right" || e.key === "ArrowRight") rightPressed = false;
+      if (e.key === "Left" || e.key === "ArrowLeft") leftPressed = false;
+    });
+
+    document.getElementById("leftButton").addEventListener("touchstart", () => leftPressed = true);
+    document.getElementById("leftButton").addEventListener("touchend", () => leftPressed = false);
+    document.getElementById("rightButton").addEventListener("touchstart", () => rightPressed = true);
+    document.getElementById("rightButton").addEventListener("touchend", () => rightPressed = false);
+
+    // Draw the paddle
+    function drawPaddle() {
+      ctx.beginPath();
+      ctx.rect(paddleX, canvas.height - paddleHeight - 10, paddleWidth, paddleHeight);
+      ctx.fillStyle = "#ff6347";
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    // Draw the bricks
+    function drawBricks() {
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          if (bricks[c][r].status === 1) {
+            const brickX = c * (brickWidth + brickPadding) + brickOffsetLeft;
+            const brickY = r * (brickHeight + brickPadding) + brickOffsetTop;
+            bricks[c][r].x = brickX;
+            bricks[c][r].y = brickY;
+            ctx.beginPath();
+            ctx.rect(brickX, brickY, brickWidth, brickHeight);
+            ctx.fillStyle = `hsl(${(r + c) * 20}, 70%, 50%)`;
+            ctx.fill();
+            ctx.closePath();
+          }
+        }
+      }
+    }
+
+    // Draw the ball
+    function drawBall() {
+      ctx.beginPath();
+      ctx.arc(x, y, ballRadius, 0, Math.PI * 2);
+      ctx.fillStyle = "#00d9ff";
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    // Collision detection with bricks
+    function collisionDetection() {
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < rows; r++) {
+          const b = bricks[c][r];
+          if (b.status === 1) {
+            if (x > b.x && x < b.x + brickWidth && y > b.y && y < b.y + brickHeight) {
+              dy = -dy;
+              b.status = 0;
+              score += doublePointsActive ? 2 : 1;
+              document.getElementById("score").innerText = `Score: ${score}`;
+              maybeDropSticker(b.x + brickWidth / 2, b.y + brickHeight / 2);
+
+              if (score >= rows * cols) nextLevel();
+            }
+          }
+        }
+      }
+    }
+
+    // Chance to drop a sticker
+    function maybeDropSticker(x, y) {
+      if (Math.random() < 0.3) {
+        const types = ["expandPaddle", "shrinkPaddle", "slowBall", "speedBall", "doublePoints", "shield"];
+        const type = types[Math.floor(Math.random() * types.length)];
+        stickers.push({ x, y, type });
+      }
+    }
+
+    // Draw and move stickers
+    function drawStickers() {
+      stickers.forEach((sticker, index) => {
+        ctx.beginPath();
+        ctx.arc(sticker.x, sticker.y, 10, 0, Math.PI * 2);
+        ctx.fillStyle = sticker.type === "expandPaddle" ? "#FFD700" :
+                        sticker.type === "shrinkPaddle" ? "#FF4500" :
+                        sticker.type === "slowBall" ? "#1E90FF" :
+                        sticker.type === "speedBall" ? "#FF6347" :
+                        sticker.type === "doublePoints" ? "#32CD32" : "#8A2BE2";
+        ctx.fill();
+        ctx.closePath();
+
+        // Move sticker downward
+        sticker.y += 2;
+
+        // Check if collected by paddle
+        if (sticker.y > canvas.height - paddleHeight - 10 && sticker.x > paddleX && sticker.x < paddleX + paddleWidth) {
+          activateSticker(sticker.type);
+          stickers.splice(index, 1);  // Remove sticker after activation
+        }
+      });
+    }
+
+    // Activate sticker effect
+    function activateSticker(type) {
+      switch (type) {
+        case "expandPaddle":
+          paddleWidth = Math.min(paddleWidth + 30, 150);
+          break;
+        case "shrinkPaddle":
+          paddleWidth = Math.max(paddleWidth - 30, 50);
+          break;
+        case "slowBall":
+          dx *= 0.8;
+          dy *= 0.8;
+          break;
+        case "speedBall":
+          dx *= 1.2;
+          dy *= 1.2;
+          break;
+        case "doublePoints":
+          doublePointsActive = true;
+          setPowerUpTimer("doublePoints", 10000);
+          break;
+        case "shield":
+          shieldActive = true;
+          setPowerUpTimer("shield", 15000);
+          break;
+      }
+    }
+
+    // Set timer for temporary power-ups
+    function setPowerUpTimer(type, duration) {
+      powerUpTimers[type] = setTimeout(() => {
+        if (type === "doublePoints") doublePointsActive = false;
+        if (type === "shield") shieldActive = false;
+      }, duration);
+    }
+
+    // Go to the next level
+    function nextLevel() {
+      level++;
+      rows += 1;
+      dx *= 1.1;
+      dy *= 1.1;
+      x = canvas.width / 2;
+      y = canvas.height - 30;
+      score = 0;
+      initBricks();
+      document.getElementById("level").innerText = `Level: ${level}`;
+    }
+
+    // Show Game Over screen
+    function showGameOver(message) {
+      gameOver = true;
+      document.getElementById("gameOver").style.display = "block";
+      document.getElementById("gameOver").querySelector("p").innerText = message;
+    }
+
+    // Draw everything on the canvas
+    function draw() {
+      if (gameOver) return;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBricks();
+      drawBall();
+      drawPaddle();
+      collisionDetection();
+      drawStickers();
+
+      // Ball movement
+      x += dx;
+      y += dy;
+
+      // Bounce off walls
+      if (x + dx > canvas.width - ballRadius || x + dx < ballRadius) dx = -dx;
+      if (y + dy < ballRadius) dy = -dy;
+      else if (y + dy > canvas.height - ballRadius - paddleHeight) {
+        if (x > paddleX && x < paddleX + paddleWidth) dy = -dy;
+        else if (shieldActive) {
+          shieldActive = false;  // Use shield once if active
+          dy = -dy;
+        } else showGameOver("Game Over");
+      }
+
+      // Paddle movement
+      if (rightPressed && paddleX < canvas.width - paddleWidth) paddleX += 5;
+      if (leftPressed && paddleX > 0) paddleX -= 5;
+
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+
+    // Restart game
+    document.getElementById("restart").addEventListener("click", () => {
+      document.location.reload();
+    });
+  </script>
+</body>
+</html>
